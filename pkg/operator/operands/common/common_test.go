@@ -549,29 +549,41 @@ var _ = Describe("MergeAffinities", func() {
 		Expect(result.PodAffinity).To(Equal(global))
 	})
 
-	It("should use local PodAntiAffinity if present", func() {
-		local := &v1.PodAntiAffinity{
-			RequiredDuringSchedulingIgnoredDuringExecution: []v1.PodAffinityTerm{
-				{TopologyKey: "foo"},
+	customAntiAffinity := &v1.PodAntiAffinity{
+		RequiredDuringSchedulingIgnoredDuringExecution: []v1.PodAffinityTerm{
+			{
+				LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "custom-app"}},
+				TopologyKey:   "topology.kubernetes.io/zone",
 			},
-		}
-		localAffinity := &v1.Affinity{PodAntiAffinity: local}
-		globalAffinity := &v1.Affinity{}
-		result := MergeAffinities(localAffinity, globalAffinity, nil, false)
-		Expect(result.PodAntiAffinity).To(Equal(local))
-	})
+		},
+	}
+	DescribeTable("should preserve configured PodAntiAffinity instead of adding default terms",
+		func(localAffinity, globalAffinity *v1.Affinity, expected *v1.PodAntiAffinity) {
+			localAffinity = localAffinity.DeepCopy()
+			globalAffinity = globalAffinity.DeepCopy()
+			originalLocal := localAffinity.DeepCopy()
+			originalGlobal := globalAffinity.DeepCopy()
+			want := expected.DeepCopy()
 
-	It("should use global PodAntiAffinity if local is nil", func() {
-		global := &v1.PodAntiAffinity{
-			RequiredDuringSchedulingIgnoredDuringExecution: []v1.PodAffinityTerm{
-				{TopologyKey: "bar"},
-			},
-		}
-		localAffinity := &v1.Affinity{}
-		globalAffinity := &v1.Affinity{PodAntiAffinity: global}
-		result := MergeAffinities(localAffinity, globalAffinity, nil, false)
-		Expect(result.PodAntiAffinity).To(Equal(global))
-	})
+			result := MergeAffinities(localAffinity, globalAffinity, map[string]string{"app": "my-app"}, true)
+
+			Expect(result.PodAntiAffinity).To(Equal(want))
+			Expect(localAffinity).To(Equal(originalLocal))
+			Expect(globalAffinity).To(Equal(originalGlobal))
+		},
+		Entry("local custom terms with global affinity unset",
+			&v1.Affinity{PodAntiAffinity: customAntiAffinity}, nil, customAntiAffinity),
+		Entry("global custom terms with local affinity unset",
+			nil, &v1.Affinity{PodAntiAffinity: customAntiAffinity}, customAntiAffinity),
+		Entry("local custom terms with global affinity empty",
+			&v1.Affinity{PodAntiAffinity: customAntiAffinity}, &v1.Affinity{}, customAntiAffinity),
+		Entry("global custom terms with local affinity empty",
+			&v1.Affinity{}, &v1.Affinity{PodAntiAffinity: customAntiAffinity}, customAntiAffinity),
+		Entry("local explicitly empty terms with global affinity unset",
+			&v1.Affinity{PodAntiAffinity: &v1.PodAntiAffinity{}}, nil, &v1.PodAntiAffinity{}),
+		Entry("global explicitly empty terms with local affinity unset",
+			nil, &v1.Affinity{PodAntiAffinity: &v1.PodAntiAffinity{}}, &v1.PodAntiAffinity{}),
+	)
 
 	It("should add default preferred podAntiAffinity when both are nil and label exists", func() {
 		labelMap := map[string]string{"app": "my-app"}
